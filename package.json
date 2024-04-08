@@ -1,0 +1,65 @@
+{
+  "name": "@kontent-ai/integration-example-algolia",
+  "version": "1.0.0",
+  "license": "MIT",
+  "dependencies": {
+    "@algolia/transporter": "^4.14.3",
+    "@kontent-ai/delivery-sdk": "^12.2.0",
+    "@kontent-ai/eslint-config": "^0.1.3",
+    "@kontent-ai/webhook-helper": "^2.0.1",
+    "@netlify/functions": "^1.2.0",
+    "@testing-library/jest-dom": "^5.16.5",
+    "@testing-library/react": "^13.4.0",
+    "@testing-library/user-event": "^14.4.3",
+    "@types/jest": "^29.1.0",
+    "@types/node": "^18.7.23",
+    "@types/react": "^18.0.21",
+    "@types/react-dom": "^18.0.6",
+    "algoliasearch": "^4.14.2",
+    "dprint": "^0.36.1",
+    "eslint": "^8.37.0",
+    "instantsearch.js": "^4.47.0",
+    "netlify-cli": "12.2.8",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-instantsearch-hooks-web": "^6.38.3",
+    "react-scripts": "5.0.1",
+    "typescript": "^4.8.2"
+  },
+  "scripts": {
+    "format": "dprint fmt",
+    "start": "react-scripts start",
+    "build": "react-scripts build",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject",
+    "lintFunctions": "eslint src/functions",
+    "netlifyDev": "netlify dev"
+  },
+  "eslintConfig": {
+    "parserOptions": {
+      "project": [
+        "./tsconfig.json",
+        "./src/functions/tsconfig.json"
+      ]
+    },
+    "extends": [
+      "react-app",
+      "react-app/jest",
+      "@kontent-ai",
+      "@kontent-ai/eslint-config/react",
+      "@kontent-ai/eslint-config/jest"
+    ]
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  }
+}
