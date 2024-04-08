@@ -82,7 +82,7 @@ export const handler: Handler = serializeUncaughtErrorsHandler(async (event) => 
   const signatureHelper = new SignatureHelper();
   if (
     !event.headers["x-kc-signature"]
-    || !signatureHelper.isValidSignatureFromString(event.body, envVars.KONTENT_SECRET, event.headers["x-kc-signature"])
+    || !signatureHelper.isValidSignatureFromString(event.body, envVars.KONTENT_SECRET, event.headers["x-kontent-ai-signature"])
   ) { 
 
     return { statusCode: 401, body: "Unauthorized" };
