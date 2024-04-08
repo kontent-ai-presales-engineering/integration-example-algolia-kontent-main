@@ -81,7 +81,7 @@ export const handler: Handler = serializeUncaughtErrorsHandler(async (event) => 
   // Consistency check - make sure your netlify environment variable and your webhook secret matches
   const signatureHelper = new SignatureHelper();
   if (
-    !event.headers["x-kc-signature"]
+    !event.headers["x-kontent-ai-signature"]
     || !signatureHelper.isValidSignatureFromString(event.body, envVars.KONTENT_SECRET, event.headers["x-kontent-ai-signature"])
   ) { 
 
