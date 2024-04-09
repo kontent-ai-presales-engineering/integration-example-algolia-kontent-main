@@ -38,7 +38,15 @@ export const handler: Handler = serializeUncaughtErrorsHandler(async (event) => 
     return { statusCode: 401, body: "Unauthorized" };
   }
 
+  console.log("event.body")
+  console.log(event.body)
+
   const webhookData: WebhookItemNotification = JSON.parse(event.body);
+
+  
+
+  console.log("webhookData")
+  console.log(webhookData)
 
   const queryParams = event.queryStringParameters;
   if (!areValidQueryParams(queryParams)) {
