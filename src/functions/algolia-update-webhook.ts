@@ -1,5 +1,5 @@
 import { DeliveryClient, IContentItem } from "@kontent-ai/delivery-sdk";
-import { IWebhookDeliveryResponse, SignatureHelper } from "@kontent-ai/webhook-helper";
+import { SignatureHelper, WebhookItemNotification } from "@kontent-ai/webhook-helper";
 import { Handler } from "@netlify/functions";
 import createAlgoliaClient, { SearchIndex } from "algoliasearch";
 
@@ -11,56 +11,6 @@ import { sdkHeaders } from "./utils/sdkHeaders";
 import { serializeUncaughtErrorsHandler } from "./utils/serializeUncaughtErrorsHandler";
 
 const { envVars, missingEnvVars } = createEnvVars(["KONTENT_SECRET", "ALGOLIA_API_KEY"] as const);
-
-// Legacy webhook data
-//     {
-//       "data": {
-//         "system": {
-//           "id": "xxx",
-//           "name": "Circuit boards and electronics post",
-//           "codename": "circuit_boards_and_electronics_post",
-//           "collection": "sandbox",
-//           "workflow": "default",
-//           "workflow_step": "published",
-//           "language": "en-US",
-//           "type": "article",
-//           "last_modified": "2024-02-06T07:53:29.4993828Z"
-//         }
-//       },
-//       "message": {
-//         "environment_id": "xxx",
-//         "object_type": "content_item",
-//         "action": "published",
-//         "delivery_slot": "published"
-//       }
-//     }
-
-// New webhook data
-// {
-//   "notifications": [
-//     {
-//       "data": {
-//         "system": {
-//           "id": "xxx",
-//           "name": "Circuit boards and electronics post",
-//           "codename": "circuit_boards_and_electronics_post",
-//           "collection": "sandbox",
-//           "workflow": "default",
-//           "workflow_step": "published",
-//           "language": "en-US",
-//           "type": "article",
-//           "last_modified": "2024-02-06T07:53:29.4993828Z"
-//         }
-//       },
-//       "message": {
-//         "environment_id": "xxx",
-//         "object_type": "content_item",
-//         "action": "published",
-//         "delivery_slot": "published"
-//       }
-//     }
-//   ]
-// }
 
 export const handler: Handler = serializeUncaughtErrorsHandler(async (event) => {
   if (event.httpMethod !== "POST") {
@@ -83,15 +33,12 @@ export const handler: Handler = serializeUncaughtErrorsHandler(async (event) => 
   if (
     !event.headers["x-kontent-ai-signature"]
     || !signatureHelper.isValidSignatureFromString(event.body, envVars.KONTENT_SECRET, event.headers["x-kontent-ai-signature"])
-  ) { 
+  ) {
 
     return { statusCode: 401, body: "Unauthorized" };
   }
 
-  const webhookData = JSON.parse(event.body);
-
-  // check if the webhook data is the new format or the old format
-  const webhookDataArray = webhookData.notifications ?? [webhookData];
+  const webhookData: WebhookItemNotification = JSON.parse(event.body);
 
   const queryParams = event.queryStringParameters;
   if (!areValidQueryParams(queryParams)) {
@@ -101,79 +48,56 @@ export const handler: Handler = serializeUncaughtErrorsHandler(async (event) => 
   const algoliaClient = createAlgoliaClient(queryParams.appId, envVars.ALGOLIA_API_KEY, { userAgent: customUserAgent });
   const index = algoliaClient.initIndex(queryParams.index);
 
-  const asyncWebhookDataArray = webhookDataArray.map(async (individialData: IWebhookDeliveryResponse) => {
+  const deliverClient = new DeliveryClient({
+    projectId: webhookData.message.environment_id,
+    globalHeaders: () => sdkHeaders,
+  });
 
-    const deliverClient = new DeliveryClient({
-      projectId: individialData.message.project_id,
-      globalHeaders: () => sdkHeaders,
-    });
+  const item = webhookData.data;
+  const existingAlgoliaItems = await findAgoliaItems(index, item.system.codename, item.system.language);
 
-    const actions = (await Promise.all(individialData.data.items
-      .map(async item => {
-        const existingAlgoliaItems = await findAgoliaItems(index, item.codename, item.language);
+  let actions;
 
-        if (!existingAlgoliaItems.length) {
-          const deliverItems = await findDeliverItemWithChildrenByCodename(deliverClient, item.codename, item.language);
-          const deliverItem = deliverItems.get(item.codename);
+  if (!existingAlgoliaItems.length) {
+    const deliverItems = await findDeliverItemWithChildrenByCodename(deliverClient, item.system.codename, item.system.language);
+    const deliverItem = deliverItems.get(item.system.codename);
 
-          if (!deliverItem || (deliverItem.system.type !== "article" && deliverItem.system.type !== "product")) {
-            return [{
-              objectIdsToRemove: [],
-              recordsToReindex: [],
-            }]
+    actions = [{
+      objectIdsToRemove: [],
+      recordsToReindex: deliverItem && canConvertToAlgoliaItem(queryParams.slug)(deliverItem)
+        ? [convertToAlgoliaItem(deliverItems, queryParams.slug)(deliverItem)]
+        : [],
+    }];
+  } else {
+    actions = await Promise.all(existingAlgoliaItems
+      .map(async i => {
+        const deliverItems = await findDeliverItemWithChildrenByCodename(deliverClient, i.codename, i.language);
+        const deliverItem = deliverItems.get(i.codename);
+
+        return deliverItem
+          ? {
+            objectIdsToRemove: [] as string[],
+            recordsToReindex: [convertToAlgoliaItem(deliverItems, queryParams.slug)(deliverItem)],
           }
+          : { objectIdsToRemove: [i.objectID], recordsToReindex: [] };
+      }));
+  }
 
-          return [{
-            objectIdsToRemove: [],
-            recordsToReindex: canConvertToAlgoliaItem(queryParams.slug)(deliverItem)
-              ? [convertToAlgoliaItem(deliverItems, queryParams.slug)(deliverItem)]
-              : [],
-          }];
-        }
+  actions = actions.flat();
 
-        return Promise.all(existingAlgoliaItems
-          .map(async i => {
-            const deliverItems = await findDeliverItemWithChildrenByCodename(deliverClient, i.codename, i.language);
-            const deliverItem = deliverItems.get(i.codename);
+  const recordsToReIndex = [
+    ...new Map(actions.flatMap(a => a.recordsToReindex.map(i => [i.codename, i] as const))).values(),
+  ];
+  const objectIdsToRemove = [...new Set(actions.flatMap(a => a.objectIdsToRemove))];
 
-            if (!deliverItem || (deliverItem.system.type !== "article" && deliverItem.system.type !== "product")) {
-              return {
-                objectIdsToRemove: [i.objectID],
-                recordsToReindex: [],
-              };
-            }
-            return  {
-                objectIdsToRemove: [] as string[],
-                recordsToReindex: [convertToAlgoliaItem(deliverItems, queryParams.slug)(deliverItem)],
-              }
-              
-          }));
-      }))).flat();
-
-      const recordsToReIndex = [
-        ...new Map(actions.flatMap(a => a.recordsToReindex.map(i => [i.codename, i] as const))).values(),
-      ];
-      const objectIdsToRemove = [...new Set(actions.flatMap(a => a.objectIdsToRemove))];
-
-      const reIndexResponse = recordsToReIndex.length ? await index.saveObjects(recordsToReIndex).wait() : undefined;
-      const deletedResponse = objectIdsToRemove.length ? await index.deleteObjects(objectIdsToRemove).wait() : undefined;
-
-      return {
-        deletedObjectIds: deletedResponse?.objectIDs,
-        reIndexedObjectIds: reIndexResponse?.objectIDs,
-      };
-  })
-
-  const results = await Promise.all(asyncWebhookDataArray);
-
-  const deletedObjectIds = results.flatMap(r => r.deletedObjectIds ?? []);
-  const reIndexedObjectIds = results.flatMap(r => r.reIndexedObjectIds ?? []);
+  const reIndexResponse = recordsToReIndex.length ? await index.saveObjects(recordsToReIndex).wait() : undefined;
+  const deletedResponse = objectIdsToRemove.length ? await index.deleteObjects(objectIdsToRemove).wait() : undefined;
 
   return {
     statusCode: 200,
     body: JSON.stringify({
-      deletedObjectIds,
-      reIndexedObjectIds,
+      deletedObjectIds: deletedResponse?.objectIDs ?? [],
+      reIndexedObjectIds: reIndexResponse?.objectIDs ?? [],
     }),
     contentType: "application/json",
   };
