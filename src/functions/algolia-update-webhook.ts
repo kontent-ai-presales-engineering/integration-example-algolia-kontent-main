@@ -38,23 +38,12 @@ export const handler: Handler = serializeUncaughtErrorsHandler(async (event) => 
     return { statusCode: 401, body: "Unauthorized" };
   }
 
-  console.log("event.body")
-  console.log(event.body)
-
   const webhookData: WebhookItemNotification = JSON.parse(event.body);
-
-  
-
-  console.log("webhookData")
-  console.log(webhookData)
 
   const queryParams = event.queryStringParameters;
   if (!areValidQueryParams(queryParams)) {
     return { statusCode: 400, body: "Missing some query parameters, please check the documentation" };
   }
-
-  console.log("queryParams")
-  console.log(queryParams)
 
   const algoliaClient = createAlgoliaClient(queryParams.appId, envVars.ALGOLIA_API_KEY, { userAgent: customUserAgent });
   const index = algoliaClient.initIndex(queryParams.index);
@@ -67,7 +56,8 @@ export const handler: Handler = serializeUncaughtErrorsHandler(async (event) => 
   const item = webhookData.data;
 
   console.log("item")
-  console.log(item)
+  console.log(item.system.codename)
+  console.log(item.system.language)
 
   const existingAlgoliaItems = await findAgoliaItems(index, item.system.codename, item.system.language);
 
