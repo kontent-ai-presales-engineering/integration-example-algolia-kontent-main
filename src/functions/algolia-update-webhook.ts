@@ -118,8 +118,8 @@ const findAgoliaItems = async (index: SearchIndex, itemCodename: string, languag
     });
 
     return response.hits;
-  } catch {
-    return [];
+  } catch (error) {
+    return error;
   }
 };
 
