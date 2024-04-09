@@ -1,8 +1,7 @@
 import { DeliveryClient, IContentItem } from "@kontent-ai/delivery-sdk";
-import { SignatureHelper, WebhookItemNotification } from "@kontent-ai/webhook-helper";
+import { SignatureHelper, WebhookItemNotification, WebhookResponse } from "@kontent-ai/webhook-helper";
 import { Handler } from "@netlify/functions";
 import createAlgoliaClient, { SearchIndex } from "algoliasearch";
-
 import { customUserAgent } from "../shared/algoliaUserAgent";
 import { hasStringProperty, nameOf } from "../shared/utils/typeguards";
 import { AlgoliaItem, canConvertToAlgoliaItem, convertToAlgoliaItem } from "./utils/algoliaItem";
@@ -33,12 +32,13 @@ export const handler: Handler = serializeUncaughtErrorsHandler(async (event) => 
   if (
     !event.headers["x-kontent-ai-signature"]
     || !signatureHelper.isValidSignatureFromString(event.body, envVars.KONTENT_SECRET, event.headers["x-kontent-ai-signature"])
-  ) {
+  ) { 
 
     return { statusCode: 401, body: "Unauthorized" };
-  }
-
-  const webhookData: WebhookItemNotification = JSON.parse(event.body);
+  } 
+  
+  const webhookResponse: WebhookResponse = JSON.parse(event.body);  
+  const webhookNotifcations: WebhookItemNotification[] = webhookResponse.notifications;
 
   const queryParams = event.queryStringParameters;
   if (!areValidQueryParams(queryParams)) {
@@ -48,50 +48,40 @@ export const handler: Handler = serializeUncaughtErrorsHandler(async (event) => 
   const algoliaClient = createAlgoliaClient(queryParams.appId, envVars.ALGOLIA_API_KEY, { userAgent: customUserAgent });
   const index = algoliaClient.initIndex(queryParams.index);
 
-  const deliverClient = new DeliveryClient({
-    projectId: webhookData.message.environment_id,
+    const deliverClient = new DeliveryClient({
+    projectId: webhookNotifcations[0].message.environment_id,
     globalHeaders: () => sdkHeaders,
   });
 
-  const item = webhookData.data;
+  const actions = (await Promise.all(webhookNotifcations
+    .map(async notification => {
+      const existingAlgoliaItems = await findAgoliaItems(index, notification.data.system.codename, notification.data.system.language);
 
-  console.log("item")
-  console.log(item.system.codename)
-  console.log(item.system.language)
+      if (!existingAlgoliaItems.length) {
+        const deliverItems = await findDeliverItemWithChildrenByCodename(deliverClient, notification.data.system.codename, notification.data.system.language);
+        const deliverItem = deliverItems.get(notification.data.system.codename);
 
-  const existingAlgoliaItems = await findAgoliaItems(index, item.system.codename, item.system.language);
+        return [{
+          objectIdsToRemove: [],
+          recordsToReindex: deliverItem && canConvertToAlgoliaItem(queryParams.slug)(deliverItem)
+            ? [convertToAlgoliaItem(deliverItems, queryParams.slug)(deliverItem)]
+            : [],
+        }];
+      }
 
-  console.log("existingAlgoliaItems")
-  console.log(existingAlgoliaItems)
+      return Promise.all(existingAlgoliaItems
+        .map(async i => {
+          const deliverItems = await findDeliverItemWithChildrenByCodename(deliverClient, i.codename, i.language);
+          const deliverItem = deliverItems.get(i.codename);
 
-  let actions;
-
-  if (!existingAlgoliaItems.length) {
-    const deliverItems = await findDeliverItemWithChildrenByCodename(deliverClient, item.system.codename, item.system.language);
-    const deliverItem = deliverItems.get(item.system.codename);
-
-    actions = [{
-      objectIdsToRemove: [],
-      recordsToReindex: deliverItem && canConvertToAlgoliaItem(queryParams.slug)(deliverItem)
-        ? [convertToAlgoliaItem(deliverItems, queryParams.slug)(deliverItem)]
-        : [],
-    }];
-  } else {
-    actions = await Promise.all(existingAlgoliaItems
-      .map(async i => {
-        const deliverItems = await findDeliverItemWithChildrenByCodename(deliverClient, i.codename, i.language);
-        const deliverItem = deliverItems.get(i.codename);
-
-        return deliverItem
-          ? {
-            objectIdsToRemove: [] as string[],
-            recordsToReindex: [convertToAlgoliaItem(deliverItems, queryParams.slug)(deliverItem)],
-          }
-          : { objectIdsToRemove: [i.objectID], recordsToReindex: [] };
-      }));
-  }
-
-  actions = actions.flat();
+          return deliverItem
+            ? {
+              objectIdsToRemove: [] as string[],
+              recordsToReindex: [convertToAlgoliaItem(deliverItems, queryParams.slug)(deliverItem)],
+            }
+            : { objectIdsToRemove: [i.objectID], recordsToReindex: [] };
+        }));
+    }))).flat();
 
   const recordsToReIndex = [
     ...new Map(actions.flatMap(a => a.recordsToReindex.map(i => [i.codename, i] as const))).values(),
@@ -118,8 +108,8 @@ const findAgoliaItems = async (index: SearchIndex, itemCodename: string, languag
     });
 
     return response.hits;
-  } catch (error) {
-    return error;
+  } catch {
+    return [];
   }
 };
 
