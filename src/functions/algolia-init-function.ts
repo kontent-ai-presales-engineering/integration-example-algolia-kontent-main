@@ -56,8 +56,9 @@ export const handler: Handler = serializeUncaughtErrorsHandler(async (event) => 
   
 
   const algoliaClient = createAlgoliaClient(body.algoliaAppId, envVars.ALGOLIA_API_KEY, { userAgent: customUserAgent });
+  console.log("algoliaClient", algoliaClient)
   const index = algoliaClient.initIndex(body.algoliaIndexName);
-
+  console.log("index", index)
 
   await index.setSettings({
     searchableAttributes: ["content.contents", "content.name", "name"],
