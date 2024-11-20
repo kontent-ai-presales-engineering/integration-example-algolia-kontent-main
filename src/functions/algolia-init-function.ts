@@ -47,6 +47,7 @@ export const handler: Handler = serializeUncaughtErrorsHandler(async (event) => 
 
 
   const allItemsMap = new Map(allItems.map(i => [i.system.codename, i]));
+  console.log(allItemsMap)
 
   const recordItems = allItems
     .filter(canConvertToAlgoliaItem(body.slugCodename))
